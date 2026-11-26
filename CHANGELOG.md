@@ -1,5 +1,8 @@
 # OKS Writ Shopper
 
+## 0.9.9
+- Removed flight point pins from the map: the game data showed flight paths that do not exist in Forever.
+
 ## 0.9.8
 - First build packaged by CurseForge straight from GitHub. Same addon as 0.9.7.
 

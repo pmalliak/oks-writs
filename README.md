@@ -6,7 +6,7 @@ A WoW Forever addon for Craftsman's Writs.
   tick "Only writs I have" to see writs in your bags or quest log, and sort by zone and
   position (NPCs standing close together end up next to each other) or by distance from you.
 - Click a row to tick it. Right-click a row for a waypoint to the NPC (TomTom too if installed) and the world map at its zone.
-- "Show on map": world map pins for the NPCs of the ticked writs (or all shown), with their spot letter and colour, plus your flight masters; NPC tooltips name the nearest flight point.
+- "Show on map": world map pins for the NPCs of the ticked writs (or all shown), with their spot letter and colour.
 - "Add to buy list" adds each ticked writ (unless its quest is already in your log) and the item it asks for, minus what you already own.
 - At the auction house the Buy List opens beside it: Check prices, then one click per step.
   Commodities: click to get the quote, click to confirm. Gear: one click per auction.

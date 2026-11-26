@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: |cffffd100OKS|r Writ Shopper
+## Notes: One Knight Stands guild addon. Pick Craftsman's Writs by zone, see where each NPC stands, and buy the items they ask for at the auction house.
+## Author: Panos
+## Version: @project-version@
+## SavedVariables: WritShopperDB
+## OptionalDeps: NaowhForever, Auctionator, TradeSkillMaster, TomTom
+## AddonCompartmentFunc: WritShopper_OnCompartmentClick
+
+Data.lua
+Core.lua
+WritsUI.lua
+BuyUI.lua
+Plan.lua
+PlanUI.lua
+Scanner.lua
+MapPins.lua

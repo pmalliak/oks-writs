@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Build WritShopper/Data.lua from writ data shipped by other installed addons.
+
+Usage: build_data.py <AddOns folder> <output Data.lua>
+
+Sources (read from the local AddOns folder, nothing is downloaded):
+  WaylaidHelper/Data.lua          ns.Writs list (id, quest, item, count, rank, bop). MIT licence.
+  WaylaidCost/WritData.lua        turn-in NPC name, zone, coordinates, NPC id.
+  NaowhForever_Market/Data/Writs.lua         profession (skill line) of each writ.
+  NaowhForever_DiscoveryData/Quests.lua      zone name -> uiMapID, for map waypoints.
+"""
+import os
+import re
+import sys
+
+EXTRA = {
+    264023: {"npc": "Battered Trunk", "zone": "Duskwood", "x": 26.27, "y": 36.19, "npcID": 0},
+    264159: {"npc": "An Old Tombstone", "zone": "Western Plaguelands", "x": 49.88, "y": 77.5, "npcID": 0},
+}
+# Coordinates for hand-in NPCs WaylaidCost names without a position, from QuestieDB_Forever.toc
+# NPC spawns (field 7), decoded 2026-11-25.
+NPC_COORDS = {13717: (50.42, 86.65), 257322: (64.77, 80.15), 6546: (46.06, 57.09), 7363: (51.98, 35.65), 8379: (29.25, 40.21)}
+SPOT_RADIUS = 4.0  # map percent: hand-ins closer than this (chained) count as one spot
+
+PROF = {164: "Blacksmithing", 165: "Leatherworking", 171: "Alchemy", 197: "Tailoring", 202: "Engineering"}
+
+
+def read(root, rel):
+    with open(os.path.join(root, rel), encoding="utf-8") as f:
+        return f.read()
+
+
+def lua_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def main(root, out):
+    helper = read(root, "WaylaidHelper/Data.lua")
+    writs = []
+    for m in re.finditer(r'^\{id=(\d+),quest=(\d+),name="((?:[^"\\]|\\.)*)",rank="(\w+)",item=(\d+),count=(\d+)(.*)\},?$',
+                         helper, re.M):
+        writs.append({
+            "id": int(m[1]), "quest": int(m[2]), "name": m[3].replace('\\"', '"'), "rank": m[4],
+            "item": int(m[5]), "count": int(m[6]), "bop": "bop=true" in m[7],
+        })
+    if len(writs) < 100:
+        sys.exit("Parsed only %d writs from WaylaidHelper; format changed?" % len(writs))
+
+    cost = read(root, "WaylaidCost/WritData.lua")
+    npcs = {}
+    for line in cost.splitlines():
+        im = re.search(r'itemID=(\d+)', line)
+        if not im:
+            continue
+        tm = re.search(r'turnIns=\{\{npc="((?:[^"\\]|\\.)*)",zone="([^"]*)"(?:,coord=\{([\d.]+),([\d.]+)\})?,npcID=(\d+)', line)
+        cm = re.search(r'bundles=\{\{(\d+),', line)
+        entry = {"count": int(cm[1]) if cm else None}
+        if tm:
+            entry.update(npc=tm[1].replace('\\"', '"'), zone=tm[2],
+                         x=float(tm[3]) if tm[3] else None, y=float(tm[4]) if tm[4] else None, npcID=int(tm[5]))
+        npcs[int(im[1])] = entry
+
+    # Hand-ins QuestieDB knows but WaylaidCost does not (objects, not NPCs).
+    # Decoded from QuestieDB_Forever.toc objects 642320 and 642497 on 2026-11-25.
+    for item, extra in EXTRA.items():
+        npcs.setdefault(item, {}).update(extra)
+    for entry in npcs.values():
+        if entry.get("x") is None and entry.get("npcID") in NPC_COORDS:
+            entry["x"], entry["y"] = NPC_COORDS[entry["npcID"]]
+
+    prof = {}
+    market = read(root, "NaowhForever_Market/Data/Writs.lua")
+    for block in re.finditer(r'\[(\d+)\]\s*=\s*\{([^}]*)\}', market):
+        for wid in re.findall(r'\d+', block[2]):
+            prof.setdefault(int(wid), []).append(PROF.get(int(block[1]), block[1]))
+
+    # Zones Naowh's quest data has no entry for. uiMapIDs from the Classic map table.
+    maps = {"Deadwind Pass": 1430}
+    quests = read(root, "NaowhForever_DiscoveryData/Quests.lua")
+    for m in re.finditer(r'\{ map = (\d+), name = "((?:[^"\\]|\\.)*)"', quests):
+        maps.setdefault(m[2], int(m[1]))
+
+    # Spots: hand-ins in the same zone within SPOT_RADIUS of each other, chained.
+    spots = {}
+    by_zone = {}
+    for w in writs:
+        n = npcs.get(w["id"], {})
+        if n.get("zone") and n.get("x") is not None:
+            by_zone.setdefault(n["zone"], []).append(w["id"])
+    for zone, ids in by_zone.items():
+        parent = {i: i for i in ids}
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for a in ids:
+            for b in ids:
+                na, nb = npcs[a], npcs[b]
+                if a < b and ((na["x"] - nb["x"]) ** 2 + (na["y"] - nb["y"]) ** 2) ** 0.5 <= SPOT_RADIUS:
+                    parent[find(a)] = find(b)
+        groups = {}
+        for i in ids:
+            groups.setdefault(find(i), []).append(i)
+        ordered = sorted(groups.values(), key=lambda g: (-len(g), min(npcs[i]["x"] for i in g)))
+        for k, g in enumerate(ordered, 1):
+            npc_names = {npcs[i]["npc"] for i in g}
+            for i in g:
+                spots[i] = (k, len(g), len(npc_names))
+
+    lines = [
+        "-- Data.lua: every Craftsman's Writ, its delivery NPC and where they stand.",
+        "-- Generated by tools/build_data.py from WaylaidHelper (MIT), WaylaidCost and NaowhForever data.",
+        "-- Do not edit by hand: re-run the script instead.",
+        "local _, ns = ...",
+        "",
+        "ns.WRITS = {",
+    ]
+    missing_npc, missing_map = 0, set()
+    for w in sorted(writs, key=lambda w: w["name"]):
+        n = npcs.get(w["id"], {})
+        fields = ["id=%d" % w["id"], "quest=%d" % w["quest"], "name=" + lua_str(w["name"]),
+                  "rank=" + lua_str(w["rank"]), "item=%d" % w["item"], "count=%d" % w["count"]]
+        profs = prof.get(w["id"])
+        if profs:
+            fields.append("prof=" + lua_str("/".join(profs)))
+        if w["bop"]:
+            fields.append("bop=true")
+        if n.get("zone"):
+            fields += ["npc=" + lua_str(n["npc"]), "zone=" + lua_str(n["zone"]), "npcID=%d" % n["npcID"]]
+            if n.get("x") is not None:
+                fields += ["x=%g" % n["x"], "y=%g" % n["y"]]
+            if w["id"] in spots:
+                k, size, nnpc = spots[w["id"]]
+                fields += ["spot=%d" % k, "spotWrits=%d" % size, "spotNPCs=%d" % nnpc]
+            if n["zone"] in maps:
+                fields.append("map=%d" % maps[n["zone"]])
+            else:
+                missing_map.add(n["zone"])
+        else:
+            missing_npc += 1
+        lines.append("    {" + ", ".join(fields) + "},")
+    lines.append("}")
+
+    # Waylaid Crates, copied as they are from WaylaidHelper (MIT): id, name, tier,
+    # quality (1 gathering/white, 2 crafting/green), level, bundles (any one fills it).
+    m = re.search(r'^ns\.Crates = \{\n(.*?)^\}', helper, re.S | re.M)
+    if not m:
+        sys.exit("WaylaidHelper ns.Crates not found")
+    crates = [l for l in m[1].splitlines() if l.startswith("{id=")]
+    lines += ["", "-- Waylaid Crates, from WaylaidHelper (MIT).", "ns.CRATES = {"]
+    lines += ["    " + l.rstrip(",") + "," for l in crates]
+    lines.append("}")
+    print("crates: %d" % len(crates))
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    print("writs: %d, without NPC: %d, zones without map id: %s" % (len(writs), missing_npc, sorted(missing_map)))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    main(sys.argv[1], sys.argv[2])

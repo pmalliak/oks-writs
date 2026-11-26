@@ -1,0 +1,33 @@
+# Put this file in the repo at .github/workflows/tag-release.yml
+# It creates the release tag vX.Y.Z when the newest "## X.Y.Z" heading in
+# CHANGELOG.md has no tag yet. The tag push fires the CurseForge webhook.
+name: Tag release
+
+on:
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create tag from CHANGELOG.md
+        run: |
+          version=$(grep -m1 -oP '^## \K[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' CHANGELOG.md || true)
+          if [ -z "$version" ]; then echo "No version heading found"; exit 0; fi
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "OKS Writ Shopper $version"
+          git push origin "$tag"
